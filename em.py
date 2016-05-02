@@ -1,3 +1,8 @@
+"""
+- Sigma initialization with I * x, x > 1
+- Quality depends on the selected box
+"""
+
 from scipy import ndimage
 from scipy import misc
 import numpy as np
@@ -27,13 +32,13 @@ def both():
     box = getbox(200, 285, 300, 330, img)
     # box = getbox(200, 285, 480, 365, img)
 
-    mu_f, sigma_f, mix_f = em_try(box, K, D, 20)
+    mu_f, sigma_f, mix_f = em_try(box, K, D, 10)
 
     # Background =====================================
-    box = getbox(0, 0, 50, 50, img)
-    # box = getbox(200, 285, 480, 365, img)
+    #box = getbox(250, 35, 350, 100, img)
+    box = getbox(50, 50, 100, 100, img)
 
-    mu_b, sigma_b, mix_b = em_try(box, K, D, 20)
+    mu_b, sigma_b, mix_b = em_try(box, K, D, 10)
 
     ysize, xsize, _ = img.shape
 
