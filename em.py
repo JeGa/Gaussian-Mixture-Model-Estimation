@@ -3,11 +3,11 @@
 - Quality depends on the selected box
 """
 
-from scipy import ndimage
 from scipy import misc
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats
+import logging
 
 
 def getbox(x1, y1, x2, y2, image):
@@ -15,6 +15,12 @@ def getbox(x1, y1, x2, y2, image):
 
 
 def both():
+    """
+        Do EM for foreground and background bounding box.
+    """
+
+    logging.basicConfig(level=logging.ERROR)
+
     # Number of Gaussians
     K = 5
 
@@ -25,32 +31,27 @@ def both():
     img = misc.imread("banana.png")
     img = np.array(img, dtype=np.float64)
 
-    print("Image shape:")
-    print(img.shape)
+    logging.info("Image shape: " + str(img.shape))
 
     # Foreground =====================================
-    box = getbox(200, 285, 300, 330, img)
+    box = getbox(200, 285, 400, 330, img)
     # box = getbox(200, 285, 480, 365, img)
+    plt.imshow(box)
 
+    print("Run foreground")
     mu_f, sigma_f, mix_f = em_try(box, K, D, 10)
 
     # Background =====================================
-    #box = getbox(250, 35, 350, 100, img)
-    box = getbox(50, 50, 100, 100, img)
+    # box = getbox(250, 35, 350, 100, img)
+    box = getbox(50, 50, 200, 100, img)
+    plt.imshow(box)
 
+    print("Run background")
     mu_b, sigma_b, mix_b = em_try(box, K, D, 10)
 
     ysize, xsize, _ = img.shape
 
-    # xv, yv = np.meshgrid(range(ysize), range(xsize))
-    # pixelCoords = np.dstack((xv, yv))
-    # pixelCoords = pixelCoords.reshape(-1, 2)
-
-    # numPixel = self.xsize * self.ysize
-    # X = np.zeros(
-    #     numPixel, dtype=[('y', 'uint16'), ('x', 'uint16'), ('values', 'float64', (numberOfSamples,))])
-    # X['y'] = pixelCoords[:, 0]
-    # X['x'] = pixelCoords[:, 1]
+    print("Compare results")
 
     gauss_f = []
     gauss_b = []
@@ -72,25 +73,13 @@ def both():
                 img[y, x] = np.array([0, 0, 0])
 
     img = img.astype(np.uint8)
+
     plt.imshow(img)
     plt.show()
     np.save("imgdata", img)
 
-    pass
-
-
-def test(img, K):
-    ysize, xsize, _ = img.shape
-
-    xv, yv = np.meshgrid(range(ysize), range(xsize))
-    pixelCoords = np.dstack((xv, yv))
-    pixelCoords = pixelCoords.reshape(-1, 2)
-
-    numPixel = xsize * ysize
-    X = np.zeros(numPixel, dtype=[('y', 'uint16'), ('x', 'uint16'), ('prob', 'float64', (K,))])
-    X['y'] = pixelCoords[:, 0]
-    X['x'] = pixelCoords[:, 1]
-    pass
+    np.savez("prob_foreground", mu_f, sigma_f, mix_f)
+    np.savez("prob_background", mu_b, sigma_b, mix_b)
 
 
 def em_try(box, K, D, iterations):
@@ -105,9 +94,15 @@ def em_try(box, K, D, iterations):
 
 
 def em(box, K, D, iterations):
-    print("Box shape:")
-    print(box.shape)
+    """
+    Arguments:
+        box: Subset of the image
+        K: Number of Gaussians
+        D: Dimension of the data points
+        iterations: Number of EM iterations
+    """
 
+    logging.info("Box shape: " + str(box.shape))
     # plt.imshow(box)
     # plt.show()
 
@@ -115,8 +110,7 @@ def em(box, K, D, iterations):
     X = box.reshape((box.shape[0] * box.shape[1], D))
     N = X.shape[0]
 
-    print("Data points matrix shape:")
-    print(X.shape)
+    logging.info("Data points matrix shape: " + str(X.shape))
 
     # Mixture of gaussian parameter (theta)
     mu = np.empty((K, D))
@@ -133,37 +127,40 @@ def em(box, K, D, iterations):
     # Sum over all mixing coefficients = 1
     mix[:] = 1.0 / K
 
-    print("Gaussians:")
-    print(K)
+    logging.info("Gaussians: " + str(K))
+    logging.info("Data point dimension: " + str(D))
+    logging.info("Initialized parameter:")
+    logging.info(mu)
+    logging.info(sigma)
+    logging.info(mix)
 
-    print("Data point dimension:")
-    print(D)
-
-    print("Initilized parameter:")
-    print(mu)
-    print(sigma)
-    print(mix)
+    # Marginal log likelihood p(X|theta)
+    lik = 0
 
     for it in range(iterations):
-
-        # E-Step
+        # E-Step, get posterior over responsibilities p(Z|X)
 
         # Responsibilities
         resp = np.empty((K, N))
         for k in range(K):
             resp[k, :] = mix[k] * scipy.stats.multivariate_normal.pdf(X, mean=mu[k], cov=sigma[k])
-            # for n in range(N):
-            #    resp[k, n] = mix[k] * scipy.stats.multivariate_normal.pdf(X[n], mean=mu[k], cov=sigma[k])
-        resp /= resp.sum(0)
+        sum = resp.sum(0)
+        # Replace all zeors with 1 so we do not divide by 0.
+        # The resulting responsibility for that point will be then 0/1 = 0.
+        sum[sum == 0] = 1
+        resp /= sum
 
-        # M-Step
+        # M-Step, maximize log likelihood for mu, sigma and mix
+
+        # Precompute
+        Nk = resp.sum(1)
 
         # mu
         mu_new = np.empty((K, D))
         for k in range(K):
             for n in range(N):
                 mu_new[k] += resp[k, n] * X[n]
-            mu_new[k] = mu_new[k, :] / resp[k].sum(0)
+            mu_new[k] = mu_new[k, :] / Nk[k]
 
         # sigma
         sigma_new = np.empty((K, D, D))
@@ -171,38 +168,36 @@ def em(box, K, D, iterations):
             for n in range(N):
                 diff = X[n] - mu_new[k]
                 sigma_new[k] += resp[k, n] * np.outer(diff, diff)
-            sigma_new[k] = sigma_new[k, :] / resp[k].sum(0)
+            sigma_new[k] = sigma_new[k, :] / Nk[k]
 
         # mix
         mix_new = np.empty(K)
         for k in range(K):
-            Nk = resp[k].sum(0)
-            mix_new[k] = Nk / N
+            mix_new[k] = Nk[k] / N
 
         mu = mu_new
         sigma = sigma_new
         mix = mix_new
 
         # Likelihood
-        lik = 0
+        lik_new = 0
         for n in range(N):
             tmp = 0
             for k in range(K):
-                tmp += resp[k, n] * scipy.stats.multivariate_normal.pdf(X[n], mean=mu[k], cov=sigma[k])
-            lik += np.log(tmp)
+                tmp += mix[k] * scipy.stats.multivariate_normal.pdf(X[n], mean=mu[k], cov=sigma[k])
+            lik_new += np.log(tmp)
 
-        print("Iteration " + str(it) + " with likelihood:")
-        print(lik)
+        print("Iteration " + str(it) + " with likelihood " + str(lik_new))
 
-        pass
+        if np.abs(lik - lik_new) <= 0.5:
+            break
 
-    print("Maximized parameter:")
-    print("Mu")
-    print(mu)
-    print("Sigma")
-    print(sigma)
-    print("Mix")
-    print(mix)
+        lik = lik_new
+
+    logging.info("Maximized parameter:")
+    logging.info(mu)
+    logging.info(sigma)
+    logging.info(mix)
 
     return mu, sigma, mix
 
